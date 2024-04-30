@@ -1,0 +1,408 @@
+package com.example.textrecognizer
+
+import android.app.Activity
+import android.app.ProgressDialog
+import android.content.ContentValues
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.net.Uri.Builder
+import android.os.Bundle
+import android.provider.MediaStore
+import android.util.Log
+import android.view.Menu
+import android.widget.EditText
+import android.widget.ImageView
+import android.widget.PopupMenu
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import com.google.android.material.button.MaterialButton
+import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.Translation
+import com.google.mlkit.nl.translate.Translator
+import com.google.mlkit.nl.translate.TranslatorOptions
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
+import com.google.mlkit.vision.text.devanagari.DevanagariTextRecognizerOptions
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import java.util.Locale
+
+class MainActivity : AppCompatActivity() {
+    //UI views
+    private lateinit var inputImageBtn: MaterialButton
+    private lateinit var recognizeTextBtn: MaterialButton
+    private lateinit var imageIv: ImageView
+    private lateinit var recognizedTextEt: EditText
+    //for translator
+    private lateinit var sourceLanguageEt: EditText
+    private lateinit var targetLanguageTv: TextView
+    private lateinit var sourceLanguageChooseBtn: MaterialButton
+    private lateinit var targetLanguageChooseBtn: MaterialButton
+    private lateinit var translateBtn: MaterialButton
+
+
+    //list with language code and title
+    private var languageArrayList:ArrayList<ModelLanguage>?=null
+    private var sourceLanguageCode="en"
+    private var sourceLanguageTitle="English"
+    private var targetLanguageCode="ur"
+    private var targetLanguageTitle="Urdu"
+    private lateinit var translatorOptions: TranslatorOptions
+    private lateinit var translator: Translator
+
+
+    private companion object{
+        //to handle the result of camera/gallery permissions in onrequestpermissionresults
+        private const val CAMERA_REQUEST_CODE=100
+        private const val STORAGE_REQUEST_CODE=101
+        private const val TAG ="MAIN_TAG"
+    }
+    private  var imageUri: Uri?=null
+
+    private lateinit var cameraPermissions: Array<String>
+    private lateinit var storagePermissions: Array<String>
+    private lateinit var progressDialog: ProgressDialog
+    private lateinit var textRecognizer: TextRecognizer
+    private lateinit var devanagariTextRecognizerOptions: DevanagariTextRecognizerOptions
+    private lateinit var chineseTextRecognizerOptions: ChineseTextRecognizerOptions
+
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        //for translator
+        sourceLanguageEt=findViewById(R.id.sourceLanguageEt)
+        targetLanguageTv=findViewById(R.id.targetLanguageTv)
+        sourceLanguageChooseBtn=findViewById(R.id.sourceLanguageChooseBtn)
+        targetLanguageChooseBtn=findViewById(R.id.targetLanguageChooseBtn)
+        translateBtn=findViewById(R.id.translateBtn)
+
+        progressDialog= ProgressDialog(this)
+        progressDialog.setTitle("Please wait")
+        progressDialog.setCanceledOnTouchOutside(false)
+
+        loadAvailablelanguages()
+
+
+        sourceLanguageChooseBtn.setOnClickListener {
+            sourceLanguageChoose()
+        }
+        targetLanguageChooseBtn.setOnClickListener {
+            targetLanguageChoose()
+        }
+        translateBtn.setOnClickListener {
+            validateData()
+        }
+
+
+        //init UI views
+       inputImageBtn=findViewById(R.id.inputImageBtn)
+       recognizeTextBtn=findViewById(R.id.recognizeTextBtn)
+        imageIv=findViewById(R.id.imageIv)
+        recognizedTextEt=findViewById(R.id.recognizedTextEt)
+
+
+        //init arrays of permisiion required for camera and gallery
+        cameraPermissions= arrayOf(android.Manifest.permission.CAMERA,android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        storagePermissions= arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+
+         progressDialog= ProgressDialog(this)
+        progressDialog.setTitle("PLEASE WAIT")
+        progressDialog.setCanceledOnTouchOutside(false)
+
+        //this will load model
+        textRecognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+
+
+
+        //handle click, show input and image dialog
+        inputImageBtn.setOnClickListener {
+            showInputImageDialog()
+        }
+        recognizeTextBtn.setOnClickListener {
+            if(imageUri==null){
+                showToast("Pick image first...")
+            }
+            else{
+                recognizeTextFromImage()
+            }
+        }
+
+    }
+    private var sourceLanguageText=""
+    private fun validateData() {
+        sourceLanguageText=sourceLanguageEt.text.toString().trim()
+        Log.d(TAG,"validateData: sourceLanguageText: $sourceLanguageText")
+        if (sourceLanguageText.isEmpty()){
+            showToast("enter text to translate....")
+
+        }
+        else{
+            startTranslation()
+        }
+
+    }
+
+    private fun startTranslation(){
+        progressDialog.setMessage("processing language model")
+        progressDialog.show()
+        translatorOptions=TranslatorOptions.Builder()
+            .setSourceLanguage(sourceLanguageCode)
+            .setTargetLanguage(targetLanguageCode)
+            .build()
+        translator=Translation.getClient(translatorOptions)
+                val downloadConditions=DownloadConditions.Builder()
+            .requireWifi()
+            .build()
+        translator.downloadModelIfNeeded(downloadConditions)
+            .addOnSuccessListener {
+                Log.d(TAG,"startTranslation: model ready,start translation...")
+
+                progressDialog.setMessage("Translating...")
+                translator.translate(sourceLanguageText)
+                    .addOnSuccessListener {translatedText->
+                        Log.d(TAG,"startTranslation: translatedText: $translatedText")
+
+                        progressDialog.dismiss()
+                        targetLanguageTv.text=translatedText
+
+                    }
+                    .addOnFailureListener{e->
+                        progressDialog.dismiss()
+                        Log.e(TAG,"startTranslation:",e)
+                        showToast("failed to translate due to ${e.message}")
+
+                    }
+
+
+            }
+            .addOnFailureListener{e->
+                progressDialog.dismiss()
+                Log.e(TAG,"startTranslation:",e)
+                showToast("failed to translate due to ${e.message}")
+
+
+            }
+
+
+    }
+
+    private fun loadAvailablelanguages(){
+        languageArrayList=ArrayList()
+        val languageCodeList= TranslateLanguage.getAllLanguages()
+
+        for (languageCode in languageCodeList){
+            val languageTitle=Locale(languageCode).displayLanguage
+            Log.d(TAG,"loadAvailableLanguages: languageCode: $languageCode")
+            Log.d(TAG,"loadAvailableLanguages: languageTitle: $languageTitle")
+            //PREPARE LANGUAGE MODEL
+            val modelLanguage= ModelLanguage(languageCode,languageTitle)
+            //add prepared language model in list
+            languageArrayList!!.add(modelLanguage)
+
+        }
+    }
+    private fun sourceLanguageChoose(){
+        val popupMenu=PopupMenu(this,sourceLanguageChooseBtn)
+        for(i in languageArrayList!!.indices) {
+            popupMenu.menu.add(Menu.NONE, i, i, languageArrayList!![i].languageTitle)
+        }
+        popupMenu.show()
+        popupMenu.setOnMenuItemClickListener {menuItem->
+            val position=menuItem.itemId
+            sourceLanguageCode=languageArrayList!![position].languageCode
+            sourceLanguageTitle=languageArrayList!![position].languageTitle
+            sourceLanguageChooseBtn.text=sourceLanguageTitle
+            sourceLanguageEt.hint="Enter $sourceLanguageTitle"
+            Log.d(TAG,"sourceLanguageChoose: sourceLanguageCode: $sourceLanguageCode")
+            Log.d(TAG,"sourceLanguageChoose: sourceLanguageTitle: $sourceLanguageTitle")
+
+
+            false
+        }
+
+    }
+    private fun targetLanguageChoose(){
+        val popupMenu=PopupMenu(this,targetLanguageChooseBtn)
+        for (i in languageArrayList!!.indices){
+            popupMenu.menu.add(Menu.NONE,i,i, languageArrayList!![i].languageTitle )
+        }
+        popupMenu.show()
+        popupMenu.setOnMenuItemClickListener {menuItem->
+            val position=menuItem.itemId
+            targetLanguageCode=languageArrayList!![position].languageCode
+            targetLanguageTitle=languageArrayList!![position].languageTitle
+            targetLanguageChooseBtn.text=targetLanguageTitle
+
+            Log.d(TAG,"targetLanguageChoose: targetLanguageCode: $targetLanguageCode")
+            Log.d(TAG,"targetLanguageChoose: targetLanguageTitle: $targetLanguageTitle")
+
+            false
+        }
+    }
+
+
+    private fun recognizeTextFromImage(){
+        progressDialog.setMessage("Preparing image...")
+        progressDialog.show()
+        try{
+            val inputImage=InputImage.fromFilePath(this,imageUri!!)
+            progressDialog.setMessage("recognising text")
+
+            val textTaskResult=textRecognizer.process(inputImage)
+                .addOnSuccessListener {text->
+                    progressDialog.dismiss()
+                    val recognizedText=text.text
+                    recognizedTextEt.setText(recognizedText)
+
+                }
+                .addOnFailureListener{ e->
+                    progressDialog.dismiss()
+                    showToast("failed to recognise text due to ${e.message}")
+                }
+
+        }
+        catch(e: Exception){
+            progressDialog.dismiss()
+            showToast("failed to prepare image due to ${e.message}")
+        }
+    }
+    private fun showInputImageDialog(){
+        val popupMenu=PopupMenu(this,inputImageBtn)
+        popupMenu.menu.add(Menu.NONE,1,1,"CAMERA")
+        popupMenu.menu.add(Menu.NONE,2,2,"GALLERY")
+
+        popupMenu.show()
+        popupMenu.setOnMenuItemClickListener { menuItem->
+            val id=menuItem.itemId
+            if(id==1){
+                //camera is clicked,check if camera permission is granted or not
+                if(checkCameraPermissions()){
+                    pickImageCamera()
+                }
+                else{
+                    requestCameraPermissions()
+                }
+            }
+            else if(id==2){
+                if(checkStoragePermissions()){
+                    pickImageGallery()
+                }
+                else{
+                    requestStoragePermission()
+                }
+
+            }
+            return@setOnMenuItemClickListener true
+        }
+
+    }
+    private fun pickImageGallery(){
+        val intent=Intent(Intent.ACTION_PICK)
+        intent.type="image/*"
+        galleryActivityResultLauncher.launch(intent)
+    }
+    private val galleryActivityResultLauncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){result->
+        if(result.resultCode== Activity.RESULT_OK){
+            val data=result.data
+            imageUri=data!!.data
+
+            imageIv.setImageURI(imageUri)
+        }
+        else{
+
+            showToast("Cancelled....!")
+        }
+
+    }
+    private fun pickImageCamera(){
+        val values=ContentValues()
+        values.put(MediaStore.Images.Media.TITLE,"sample title")
+        values.put(MediaStore.Images.Media.DESCRIPTION,"sample description")
+
+        imageUri=contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values)
+
+        val intent =Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+        intent.putExtra(MediaStore.EXTRA_OUTPUT,imageUri)
+        cameraActivityResultLauncher.launch(intent)
+    }
+    private val cameraActivityResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()){ result ->
+        //here we recieve the image, if taken from camera
+        if (result.resultCode == Activity.RESULT_OK) {
+        //image is taken from camera
+        //we already have image in imageuri using function pickimagecamera
+            imageIv.setImageURI(imageUri)
+        }
+        else{
+            //cancelled
+            showToast("cancelled.....!")
+        }
+    }
+    private fun checkStoragePermissions(): Boolean{
+        return ContextCompat.checkSelfPermission(this, android.Manifest.permission.WRITE_EXTERNAL_STORAGE)==PackageManager.PERMISSION_GRANTED
+    }
+    private fun checkCameraPermissions(): Boolean {
+        val cameraResult=ContextCompat.checkSelfPermission(this,android.Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED
+        val storageResult=ContextCompat.checkSelfPermission(this,android.Manifest.permission.WRITE_EXTERNAL_STORAGE)==PackageManager.PERMISSION_GRANTED
+        return cameraResult && storageResult
+    }
+    private fun requestStoragePermission(){
+        ActivityCompat.requestPermissions(this,storagePermissions, STORAGE_REQUEST_CODE)
+    }
+    private fun requestCameraPermissions(){
+        ActivityCompat.requestPermissions(this,cameraPermissions, CAMERA_REQUEST_CODE)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        //handle permission results
+        when(requestCode){
+            CAMERA_REQUEST_CODE ->{
+                if(grantResults.isNotEmpty()){
+                    val cameraAccepted=grantResults[0]== PackageManager.PERMISSION_GRANTED
+                    val storageAccepted=grantResults[1]== PackageManager.PERMISSION_GRANTED
+                    if (cameraAccepted&& storageAccepted){
+                        pickImageCamera()
+                    }
+                    else{
+                        showToast("CAMERA AND STORAGE PERMISSION ARE REQUIRED")
+                    }
+
+                }
+            }
+            STORAGE_REQUEST_CODE->{
+                if(grantResults.isNotEmpty()){
+
+                    val storageAccepted=grantResults[0]== PackageManager.PERMISSION_GRANTED
+                    if(storageAccepted){
+                        pickImageGallery()
+                    }
+                    else{
+                        showToast("STORAGE PERMISSION IS REQUIRED...")
+                    }
+                }
+
+
+                }
+        }
+    }
+
+        private fun showToast(message: String){
+        Toast.makeText(this,message,Toast.LENGTH_SHORT).show()
+    }
+}
+
+
